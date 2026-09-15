@@ -1,0 +1,44 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Azure 클라이언트 ID (공개돼도 무방한 식별자).
+          # 값을 바꾸려면 저장소 Settings → Secrets and variables → Actions → Variables 에
+          # VITE_MS_CLIENT_ID 를 등록하거나, 아래 기본값을 수정.
+          VITE_MS_CLIENT_ID: ${{ vars.VITE_MS_CLIENT_ID || 'dd6cd393-9e69-47c7-b11f-0dbae75cf7a4' }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
