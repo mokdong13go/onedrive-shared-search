@@ -152,6 +152,17 @@ th {
   color: var(--muted);
 }
 
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+th.sortable:hover {
+  background: #f0f0f3;
+  color: var(--fg);
+}
+
 tr:last-child td {
   border-bottom: none;
 }

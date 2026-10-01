@@ -40,6 +40,9 @@ export default function App() {
   const [error, setError] = useState("");
   const [loadMs, setLoadMs] = useState(null); // 전체 불러오기 소요시간(ms)
   const [loaded, setLoaded] = useState(false); // 전체 목록을 한 번이라도 불러왔는지
+  // 정렬 상태. 기본은 "정렬 안 함"(불러온 순서 그대로) — 헤더를 클릭해야 정렬 시작.
+  const [sortKey, setSortKey] = useState(null); // null | "name" | "path" | "lastModified"
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
 
   const login = useCallback(() => {
     instance.loginPopup(loginRequest).catch((e) => setError(e.message));
@@ -97,11 +100,58 @@ export default function App() {
     );
   }, [items, query]);
 
-  // 현재 화면에 표시된 결과(filtered)를 .xlsx 로 내려받는다.
+  // 정렬. 헤더를 클릭해 sortKey 가 정해졌을 때만 정렬하고, 그 전에는 불러온 순서를
+  // 그대로 쓴다(폴더 불러오기 직후 추가 정렬 비용 없음).
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered; // 기본: 불러온 순서 유지
+    const dir = sortDir === "asc" ? 1 : -1;
+    // 문자열(이름/경로)은 NFC 정규화 + 로케일 비교, 수정일은 시간값 비교.
+    const cmpStr = (a, b) =>
+      (a || "").normalize("NFC").localeCompare((b || "").normalize("NFC"), "ko");
+    const cmpDate = (a, b) =>
+      (a ? new Date(a).getTime() : 0) - (b ? new Date(b).getTime() : 0);
+
+    const primary = (a, b) => {
+      if (sortKey === "lastModified") return cmpDate(a.lastModified, b.lastModified);
+      if (sortKey === "name") return cmpStr(a.name, b.name);
+      return cmpStr(a.path, b.path); // "path"
+    };
+    // 2순위 보조: 이름 정렬이면 경로를, 경로 정렬이면 이름을 보조로. (방향 동일)
+    const secondary = (a, b) => {
+      if (sortKey === "name") return cmpStr(a.path, b.path);
+      if (sortKey === "path") return cmpStr(a.name, b.name);
+      return 0; // 수정일은 보조정렬 없음
+    };
+
+    return [...filtered].sort((a, b) => {
+      const p = primary(a, b);
+      if (p !== 0) return p * dir;
+      return secondary(a, b) * dir;
+    });
+  }, [filtered, sortKey, sortDir]);
+
+  // 헤더 클릭: 같은 키면 방향 토글, 다른 키면 그 키로 바꾸고 오름차순부터.
+  const toggleSort = useCallback(
+    (key) => {
+      if (key === sortKey) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortKey(key);
+        setSortDir("asc");
+      }
+    },
+    [sortKey]
+  );
+
+  // 헤더에 붙일 정렬 방향 표시(▲/▼). 활성 컬럼에만 표시.
+  const sortArrow = (key) =>
+    key === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+
+  // 현재 화면에 표시된 결과(sorted)를 .xlsx 로 내려받는다.
   // 마지막 "파일바로열기" 열에는 webUrl 을 클릭 가능한 하이퍼링크로 넣는다.
   const handleExport = useCallback(() => {
     const header = ["이름", "경로", "크기", "수정일", "파일바로열기"];
-    const rows = filtered.map((it) => [
+    const rows = sorted.map((it) => [
       it.name,
       parentPathOf(it.path),
       formatSize(it.size),
@@ -113,7 +163,7 @@ export default function App() {
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
 
     // 마지막 열(E, 0-based 4) 각 데이터 행에 하이퍼링크 부여.
-    filtered.forEach((it, i) => {
+    sorted.forEach((it, i) => {
       if (!it.webUrl) return;
       const addr = XLSX.utils.encode_cell({ r: i + 1, c: 4 }); // +1: 헤더 다음 행
       const cell = ws[addr];
@@ -133,7 +183,7 @@ export default function App() {
     XLSX.utils.book_append_sheet(wb, ws, "검색결과");
     const base = (rootName || "공유폴더").replace(/[\\/:*?"<>|]/g, "_");
     XLSX.writeFile(wb, `${base}_검색결과.xlsx`);
-  }, [filtered, rootName]);
+  }, [sorted, rootName]);
 
   return (
     <div className="app">
@@ -221,14 +271,23 @@ export default function App() {
         <table>
           <thead>
             <tr>
-              <th>이름</th>
-              <th>경로</th>
+              <th className="sortable" onClick={() => toggleSort("name")}>
+                이름{sortArrow("name")}
+              </th>
+              <th className="sortable" onClick={() => toggleSort("path")}>
+                경로{sortArrow("path")}
+              </th>
               <th>크기</th>
-              <th>수정일</th>
+              <th
+                className="sortable"
+                onClick={() => toggleSort("lastModified")}
+              >
+                수정일{sortArrow("lastModified")}
+              </th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id}>
                 <td>
                   <a href={it.webUrl} target="_blank" rel="noreferrer">
