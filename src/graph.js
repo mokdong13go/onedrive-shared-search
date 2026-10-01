@@ -53,8 +53,11 @@ export async function listAllItems(driveId, itemId, accessToken, parentPath = ""
         webUrl: item.webUrl,
         childCount: item.folder?.childCount ?? 0,
       });
-      // 하위 폴더 재귀 탐색
-      if (item.folder && item.folder.childCount > 0) {
+      // 하위 폴더 재귀 탐색.
+      // 주의: childCount 를 신뢰하지 않는다. OneDrive 가 동기화 지연 등으로
+      // 하위 항목이 있는데도 childCount 를 0 으로 보고하는 경우가 있어,
+      // 그 폴더 안의 파일이 통째로 누락되던 버그가 있었다. folder 여부만 보고 재귀한다.
+      if (item.folder) {
         const sub = await listAllItems(driveId, item.id, accessToken, itemPath);
         results.push(...sub);
       }

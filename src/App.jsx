@@ -67,14 +67,16 @@ export default function App() {
   }, [getToken, shareUrl]);
 
   // 파일명·경로 기준 필터링 (메타데이터 검색)
+  // 한글 파일명은 저장소에 따라 자모 분리형(NFD)으로 올 수 있어, 완성형(NFC)으로
+  // 입력한 검색어와 그대로는 매칭되지 않는다. 양쪽을 NFC 로 정규화해 비교한다.
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim().toLowerCase().normalize("NFC");
     const files = items.filter((it) => !it.isFolder);
     if (!q) return files;
     return files.filter(
       (it) =>
-        it.name.toLowerCase().includes(q) ||
-        it.path.toLowerCase().includes(q)
+        it.name.toLowerCase().normalize("NFC").includes(q) ||
+        it.path.toLowerCase().normalize("NFC").includes(q)
     );
   }, [items, query]);
 
