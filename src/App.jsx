@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
+import * as XLSX from "xlsx";
 import { loginRequest, isClientIdConfigured } from "./authConfig";
 import { loadSharedFolder } from "./graph";
 
@@ -17,6 +18,14 @@ function formatSize(bytes) {
     i++;
   }
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+// 경로에서 파일명을 떼고 상위 폴더 경로까지만 반환한다.
+// 예) "A/B/강임호.pdf" → "A/B", 최상위 파일 "강임호.pdf" → "" (루트)
+function parentPathOf(path) {
+  if (!path) return "";
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "" : path.slice(0, idx);
 }
 
 export default function App() {
@@ -88,6 +97,44 @@ export default function App() {
     );
   }, [items, query]);
 
+  // 현재 화면에 표시된 결과(filtered)를 .xlsx 로 내려받는다.
+  // 마지막 "파일바로열기" 열에는 webUrl 을 클릭 가능한 하이퍼링크로 넣는다.
+  const handleExport = useCallback(() => {
+    const header = ["이름", "경로", "크기", "수정일", "파일바로열기"];
+    const rows = filtered.map((it) => [
+      it.name,
+      parentPathOf(it.path),
+      formatSize(it.size),
+      it.lastModified
+        ? new Date(it.lastModified).toLocaleDateString("ko-KR")
+        : "",
+      "파일 열기", // 셀 표시 텍스트. 아래에서 하이퍼링크(l)를 붙인다.
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+
+    // 마지막 열(E, 0-based 4) 각 데이터 행에 하이퍼링크 부여.
+    filtered.forEach((it, i) => {
+      if (!it.webUrl) return;
+      const addr = XLSX.utils.encode_cell({ r: i + 1, c: 4 }); // +1: 헤더 다음 행
+      const cell = ws[addr];
+      if (cell) cell.l = { Target: it.webUrl, Tooltip: it.name };
+    });
+
+    // 보기 좋게 열 너비 지정.
+    ws["!cols"] = [
+      { wch: 40 }, // 이름
+      { wch: 50 }, // 경로
+      { wch: 10 }, // 크기
+      { wch: 12 }, // 수정일
+      { wch: 14 }, // 파일바로열기
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "검색결과");
+    const base = (rootName || "공유폴더").replace(/[\\/:*?"<>|]/g, "_");
+    XLSX.writeFile(wb, `${base}_검색결과.xlsx`);
+  }, [filtered, rootName]);
+
   return (
     <div className="app">
       <header>
@@ -142,6 +189,16 @@ export default function App() {
                 {loadMs != null && ` · ${(loadMs / 1000).toFixed(2)}초`}
               </span>
             )}
+            {loaded && (
+              <button
+                className="excel"
+                onClick={handleExport}
+                disabled={filtered.length === 0}
+                title="현재 표시된 결과를 엑셀(.xlsx)로 저장"
+              >
+                결과 엑셀 다운로드
+              </button>
+            )}
           </div>
 
           <div className="load-row">
@@ -178,7 +235,7 @@ export default function App() {
                     {it.name}
                   </a>
                 </td>
-                <td className="path">{it.path}</td>
+                <td className="path">{parentPathOf(it.path)}</td>
                 <td>{formatSize(it.size)}</td>
                 <td>
                   {it.lastModified

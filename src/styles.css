@@ -74,6 +74,17 @@ button:disabled {
   cursor: default;
 }
 
+/* 엑셀 다운로드 버튼: 연두색 배경 */
+button.excel {
+  background: #a8e063;
+  border-color: #93cf4a;
+  color: #1b1b1f;
+}
+
+button.excel:hover {
+  background: #9ad653;
+}
+
 .load-row,
 .search-row {
   display: flex;

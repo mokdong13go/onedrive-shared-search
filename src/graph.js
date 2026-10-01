@@ -53,6 +53,9 @@ async function mapWithConcurrency(tasks, limit, worker) {
 const CHILDREN_SELECT =
   "id,name,size,lastModifiedDateTime,webUrl,folder,file";
 
+// 결과에서 숨길 OS 생성 시스템 파일(대소문자 무시). 썸네일 캐시 등.
+const HIDDEN_FILES = new Set(["thumbs.db", ".ds_store", "desktop.ini"]);
+
 /**
  * 공유 폴더 내부의 모든 파일/하위폴더를 재귀적으로 수집합니다.
  * driveId + itemId 기준으로 children 을 순회합니다.
@@ -69,6 +72,10 @@ export async function listAllItems(driveId, itemId, accessToken, parentPath = ""
     const page = await graphGet(url, accessToken);
     for (const item of page.value) {
       const itemPath = parentPath ? `${parentPath}/${item.name}` : item.name;
+      // Thumbs.db 등 OS 가 만든 시스템 파일은 결과에서 숨긴다(폴더는 영향 없음).
+      if (!item.folder && HIDDEN_FILES.has(item.name.toLowerCase())) {
+        continue;
+      }
       results.push({
         id: item.id,
         name: item.name,
