@@ -31,14 +31,40 @@ export async function getSharedItem(shareUrl, accessToken) {
 }
 
 /**
+ * 비동기 작업 배열을 동시성 상한(limit) 안에서 병렬 실행합니다.
+ * 모든 폴더를 무제한으로 동시에 치면 Graph 가 429(스로틀링)를 돌려주므로,
+ * 적당한 상한을 두고 작업이 끝나는 대로 다음 작업을 밀어 넣습니다.
+ */
+async function mapWithConcurrency(tasks, limit, worker) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  async function run() {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await worker(tasks[i], i);
+    }
+  }
+  const runners = Array.from({ length: Math.min(limit, tasks.length) }, run);
+  await Promise.all(runners);
+  return results;
+}
+
+// children 호출 시 꼭 필요한 필드만 받아 페이로드·파싱 비용을 줄인다.
+const CHILDREN_SELECT =
+  "id,name,size,lastModifiedDateTime,webUrl,folder,file";
+
+/**
  * 공유 폴더 내부의 모든 파일/하위폴더를 재귀적으로 수집합니다.
  * driveId + itemId 기준으로 children 을 순회합니다.
+ * 같은 레벨의 하위 폴더들은 병렬로(동시성 상한 내) 순회해 속도를 높입니다.
  * @returns {Promise<Array>} 평탄화된 항목 배열 (경로 정보 포함)
  */
 export async function listAllItems(driveId, itemId, accessToken, parentPath = "") {
   const results = [];
-  let url = `${GRAPH_BASE}/drives/${driveId}/items/${itemId}/children?$top=200`;
+  const subFolders = []; // 이 폴더 아래에서 추가로 순회할 하위 폴더들
+  let url = `${GRAPH_BASE}/drives/${driveId}/items/${itemId}/children?$top=200&$select=${CHILDREN_SELECT}`;
 
+  // 1) 현재 폴더의 모든 페이지를 받아 항목을 기록하고, 하위 폴더 목록을 모은다.
   while (url) {
     const page = await graphGet(url, accessToken);
     for (const item of page.value) {
@@ -53,17 +79,22 @@ export async function listAllItems(driveId, itemId, accessToken, parentPath = ""
         webUrl: item.webUrl,
         childCount: item.folder?.childCount ?? 0,
       });
-      // 하위 폴더 재귀 탐색.
       // 주의: childCount 를 신뢰하지 않는다. OneDrive 가 동기화 지연 등으로
       // 하위 항목이 있는데도 childCount 를 0 으로 보고하는 경우가 있어,
       // 그 폴더 안의 파일이 통째로 누락되던 버그가 있었다. folder 여부만 보고 재귀한다.
       if (item.folder) {
-        const sub = await listAllItems(driveId, item.id, accessToken, itemPath);
-        results.push(...sub);
+        subFolders.push({ id: item.id, path: itemPath });
       }
     }
     url = page["@odata.nextLink"] || null;
   }
+
+  // 2) 하위 폴더들을 병렬로 순회한다(동시성 상한 8). 순차 await 대비 큰 폴더에서 수 배 빨라진다.
+  const subResults = await mapWithConcurrency(subFolders, 8, (f) =>
+    listAllItems(driveId, f.id, accessToken, f.path)
+  );
+  for (const sub of subResults) results.push(...sub);
+
   return results;
 }
 

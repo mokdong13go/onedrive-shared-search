@@ -5,7 +5,7 @@ import { loadSharedFolder } from "./graph";
 
 // 기본 예시 링크 (사용자가 제공한 공유 폴더). 필요 시 지우고 다른 링크 입력.
 const DEFAULT_SHARE_URL =
-  "https://1drv.ms/f/c/745a99f9c58cd890/IgC2Lb3kS8OiQrXalMTnPguvAVTtdb1-fc07NUJot79Rz6s?e=pvh4nO";
+  "https://1drv.ms/f/c/745a99f9c58cd890/IgB5LBCn_n8rQIvOqbkWtIkOAeHYdoZod_Wo1B-9JtzPIF8?e=iXMNuj";
 
 function formatSize(bytes) {
   if (bytes == null) return "";
@@ -24,11 +24,13 @@ export default function App() {
   const isAuthenticated = useIsAuthenticated();
 
   const [shareUrl, setShareUrl] = useState(DEFAULT_SHARE_URL);
+  const [query, setQuery] = useState("");
   const [items, setItems] = useState([]);
   const [rootName, setRootName] = useState("");
-  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loadMs, setLoadMs] = useState(null); // 전체 불러오기 소요시간(ms)
+  const [loaded, setLoaded] = useState(false); // 전체 목록을 한 번이라도 불러왔는지
 
   const login = useCallback(() => {
     instance.loginPopup(loginRequest).catch((e) => setError(e.message));
@@ -50,15 +52,22 @@ export default function App() {
     }
   }, [instance, accounts]);
 
+  // 공유 폴더 전체를 한 번 불러온다(=full scan). 이후 검색은 아래 filtered 로 즉시 처리.
   const handleLoad = useCallback(async () => {
     setError("");
     setLoading(true);
     setItems([]);
+    setLoadMs(null);
+    setLoaded(false);
     try {
       const token = await getToken();
+      const started = performance.now();
       const { root, items } = await loadSharedFolder(shareUrl, token);
+      const elapsed = performance.now() - started;
+      setLoadMs(elapsed);
       setRootName(root.name || "공유 폴더");
-      setItems(items);
+      setItems(items.filter((it) => !it.isFolder));
+      setLoaded(true);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -66,14 +75,13 @@ export default function App() {
     }
   }, [getToken, shareUrl]);
 
-  // 파일명·경로 기준 필터링 (메타데이터 검색)
+  // 파일명·경로 기준 클라이언트 필터링.
   // 한글 파일명은 저장소에 따라 자모 분리형(NFD)으로 올 수 있어, 완성형(NFC)으로
   // 입력한 검색어와 그대로는 매칭되지 않는다. 양쪽을 NFC 로 정규화해 비교한다.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase().normalize("NFC");
-    const files = items.filter((it) => !it.isFolder);
-    if (!q) return files;
-    return files.filter(
+    if (!q) return items;
+    return items.filter(
       (it) =>
         it.name.toLowerCase().normalize("NFC").includes(q) ||
         it.path.toLowerCase().normalize("NFC").includes(q)
@@ -114,6 +122,28 @@ export default function App() {
 
       {isAuthenticated && (
         <>
+          {/* 검색창(상단). 전체 목록을 불러온 뒤 입력하면 즉시 필터링된다. */}
+          <div className="search-row">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={
+                loaded
+                  ? `"${rootName}" 안에서 파일명 검색…`
+                  : "먼저 아래에서 폴더를 불러오세요 (약 10초 예상)"
+              }
+              disabled={!loaded}
+              autoFocus
+            />
+            {loaded && (
+              <span className="count">
+                {filtered.length}개 / 전체 {items.length}개 파일
+                {loadMs != null && ` · ${(loadMs / 1000).toFixed(2)}초`}
+              </span>
+            )}
+          </div>
+
           <div className="load-row">
             <input
               type="text"
@@ -125,20 +155,6 @@ export default function App() {
               {loading ? "불러오는 중…" : "폴더 불러오기"}
             </button>
           </div>
-
-          {rootName && (
-            <div className="search-row">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={`"${rootName}" 안에서 파일명 검색…`}
-              />
-              <span className="count">
-                {filtered.length}개 / 전체 {items.filter((i) => !i.isFolder).length}개 파일
-              </span>
-            </div>
-          )}
         </>
       )}
 
@@ -175,7 +191,7 @@ export default function App() {
         </table>
       )}
 
-      {rootName && filtered.length === 0 && !loading && (
+      {loaded && filtered.length === 0 && !loading && (
         <p className="hint">검색 결과가 없습니다.</p>
       )}
     </div>
